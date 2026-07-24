@@ -1,11 +1,11 @@
 # 🛡️ Living-off-the-Land Ransomware Precursor Detection Lab
 
-![Wazuh](https://img.shields.io/badge/SIEM-Wazuh-3AA5DC?style=for-the-badge&logo=wazuh&logoColor=white)
-![Kali](https://img.shields.io/badge/Attacker-Kali%20Linux-557C94?style=for-the-badge&logo=kalilinux&logoColor=white)
-![Windows10](https://img.shields.io/badge/Victim-Windows%2010-0078D6?style=for-the-badge&logo=windows&logoColor=white)
-![Sysmon](https://img.shields.io/badge/Telemetry-Sysmon-6E40C9?style=for-the-badge)
+![Wazuh](https://img.shields.io/badge/SIEM-Wazuh-00BCD4?style=for-the-badge&logo=wazuh&logoColor=white)
+![Kali](https://img.shields.io/badge/Attacker-Kali%20Linux-E4002B?style=for-the-badge&logo=kalilinux&logoColor=white)
+![Windows10](https://img.shields.io/badge/Victim-Windows%2010-00A4EF?style=for-the-badge&logo=windows&logoColor=white)
+![Sysmon](https://img.shields.io/badge/Telemetry-Sysmon-9C27B0?style=for-the-badge)
 ![Docker](https://img.shields.io/badge/Deployment-Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Complete-2ea44f?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Complete-39D353?style=for-the-badge)
 
 > A self-built detection lab where I played both sides — attacker and defender — against a Windows 10 host, then used Wazuh to hunt down what I did, write custom detection rules for the gaps, and document the whole thing like a real incident.
 
@@ -22,16 +22,16 @@ Everything in this repo is a real screenshot from that lab — timestamps, hit c
 ## 🗺️ Lab Topology
 
 ```
-┌─────────────────────┐        ┌──────────────────────────┐
-│   Kali Linux (VM)    │        │   Windows 10 Pro (VM)     │
-│   192.168.100.3       │──────▶│   192.168.100.4            │
-│                        │ SMB/  │                            │
-│ • nmap                │ RDP   │ • Sysmon (custom config)   │
-│ • Hydra               │       │ • Windows Event Logging     │
-│ • Wazuh Manager        │       │ • Wazuh Agent (id: 002)     │
-│   + Indexer + Dashboard│◀──────│   forwarding to manager    │
-│   (Docker, single node)│ logs  │                            │
-└─────────────────────┘        └──────────────────────────┘
+ ┌─────────────────────┐        ┌──────────────────────────┐
+│   Kali Linux (VM)    │        │   Windows 10 Pro (VM)    │
+│   192.168.100.3      │──────▶ │   192.168.100.4         │
+│                      │ SMB/   │                          │
+│ • nmap               │ RDP    │ • Sysmon (custom config) │
+│ • Hydra              │        │ • Windows Event Logging  │
+│ • Wazuh Manager      │        │ • Wazuh Agent (id: 002)  │
+| + Indexer + Dashboard│◀───── │   forwarding to manager  │
+│ (Docker, single node)│ logs   │                          │
+└─────────────────────┘         └──────────────────────────┘
 ```
 
 Wazuh runs on the same Kali box as a Docker single-node stack (indexer + manager + dashboard) and the Windows 10 VM runs the Wazuh agent, forwarding Sysmon and Windows Security events back for analysis.
@@ -75,58 +75,89 @@ That last one is the headline finding. Wazuh's correlation engine actually caugh
 ### 1. Environment stood up
 Wazuh single-node stack came up clean via Docker Compose — indexer, manager, and dashboard containers all healthy.
 
-`screenshots/01_environment_setup/01_wazuh_docker_deployment.png`
+![Wazuh Docker deployment](screenshots/01_environment_setup/01_wazuh_docker_deployment.png)
+*Wazuh single-node stack (indexer, manager, dashboard) coming up via `docker compose up -d`.*
 
 ### 2. Recon & credential brute force (attacker side)
 A full port scan against the Windows box turned up SMB (445), RPC (135), NetBIOS (139), and a couple of oddities worth a closer look. Hydra was then pointed at SMB with a small user/password list and, after working through a batch of invalid accounts, landed on a valid one.
 
-- `screenshots/02_reconnaissance/03_nmap_portscan_hydra_start.png`
-- `screenshots/03_initial_access_credential_access/05_hydra_smb_bruteforce_success.png`
+![Nmap scan and Hydra start](screenshots/02_reconnaissance/03_nmap_portscan_hydra_start.png)
+*Full port scan, then Hydra kicked off against SMB.*
+
+![Hydra brute force success](screenshots/03_initial_access_credential_access/05_hydra_smb_bruteforce_success.png)
+*Valid credential found: `labuser:Password123!`*
 
 ### 3. Wazuh catches the logon
 Once that cracked credential was used to log on remotely, Wazuh flagged it — NTLM auth pattern consistent with pass-the-hash, tagged as a possible RDP connection.
 
-`screenshots/03_initial_access_credential_access/06_wazuh_detects_pass_the_hash_rdp.png`
+![Wazuh detects pass-the-hash RDP logon](screenshots/03_initial_access_credential_access/06_wazuh_detects_pass_the_hash_rdp.png)
+*Rule fires on the NTLM logon pattern within an hour of the cracked credential being used.*
 
 ### 4. Persistence — account, registry, scheduled task
 From there I planted three separate footholds: a new local user (`labuser`), a `Run` key with a base64-looking payload string, and a scheduled task that fires a binary at a set time. Wazuh's own rule engine flagged the registry value on its own — "Value added to registry key has Base64-like pattern," level 10 — without me pointing it there.
 
-- `screenshots/04_persistence/07_local_admin_account_created.png`
-- `screenshots/04_persistence/08_wmic_account_sid_verification.png`
-- `screenshots/04_persistence/09_registry_run_key_persistence.png`
-- `screenshots/04_persistence/10_scheduled_task_persistence.png`
+![Local account created](screenshots/04_persistence/07_local_admin_account_created.png)
+*New local account `labuser` created via `net user`.*
+
+![Account SID verification](screenshots/04_persistence/08_wmic_account_sid_verification.png)
+*Confirming the new account via `wmic useraccount get name,sid`.*
+
+![Registry Run key persistence](screenshots/04_persistence/09_registry_run_key_persistence.png)
+*Wazuh auto-flagged this one: "Value added to registry key has Base64-like pattern."*
+
+![Scheduled task persistence](screenshots/04_persistence/10_scheduled_task_persistence.png)
+*A third foothold — a scheduled task set to fire at a specific time.*
 
 ### 5. Defense evasion with LOLBins
 `rundll32.exe shell32.dll,Control_RunDLL` popped Control Panel — a technique that's popular precisely because `rundll32` is a trusted, signed binary that almost nothing flags by default.
 
-`screenshots/05_defense_evasion/11_rundll32_control_panel_lolbin.png`
+![Rundll32 LOLBin abuse](screenshots/05_defense_evasion/11_rundll32_control_panel_lolbin.png)
+*Control Panel launched through `rundll32.exe` instead of a normal shortcut — a trusted binary doing untrusted-looking work.*
 
 ### 6. The shadow copy deletion
 This is the one that matters most. `vssadmin delete shadows /all /quiet` wipes every local restore point on the box — it's step one of basically every commodity ransomware playbook before the encryption routine kicks off.
 
-`screenshots/06_impact_precursor/12_shadow_copy_deletion_vssadmin.png`
+![Shadow copy deletion via vssadmin](screenshots/06_impact_precursor/12_shadow_copy_deletion_vssadmin.png)
+*`vssadmin delete shadows /all /quiet` — the ransomware precursor move that matters most in this whole chain.*
 
 ### 7. Threat hunting the aftermath
 I went back into the Wazuh Threat Hunting module to reconstruct the timeline by hand — some queries came up empty (good to show, it's part of real hunting), others pinpointed the exact alert. The full 519-event timeline for the host ties everything together: logons, PowerShell scripting activity, the registry alert, and two separate firings of a correlation rule I wrote myself.
 
-- `screenshots/07_detection_dashboard/13_wazuh_agent_overview_mitre_dashboard.png`
-- `screenshots/07_detection_dashboard/14_threat_hunting_query_registry_noresult.png`
-- `screenshots/07_detection_dashboard/15_dql_query_vssadmin_alert_hit.png`
-- `screenshots/07_detection_dashboard/16_events_timeline_sysmon_dllhost_alert.png`
-- `screenshots/07_detection_dashboard/17_full_attack_timeline_519_events.png`
+![Wazuh agent overview dashboard](screenshots/07_detection_dashboard/13_wazuh_agent_overview_mitre_dashboard.png)
+*MITRE ATT&CK top tactics, compliance mapping, and vulnerability counts for the `windows10` agent.*
+
+![Threat hunting query with no results](screenshots/07_detection_dashboard/14_threat_hunting_query_registry_noresult.png)
+*Not every query hits — this is real hunting, not a highlight reel.*
+
+![DQL query pinpointing the vssadmin alert](screenshots/07_detection_dashboard/15_dql_query_vssadmin_alert_hit.png)
+*Narrowing in with a field-specific query on the command line.*
+
+![Events timeline with Sysmon dllhost alert](screenshots/07_detection_dashboard/16_events_timeline_sysmon_dllhost_alert.png)
+*Detection timeline including the Sysmon suspicious-process alert.*
+
+![Full attack timeline, 519 events](screenshots/07_detection_dashboard/17_full_attack_timeline_519_events.png)
+*The full picture — logons, PowerShell activity, the registry alert, and two firings of the custom correlation rule, all in one view.*
 
 ### 8. Detection engineering
 Wazuh ships a built-in Sysmon rule for suspicious `dllhost.exe` activity, mapped to GDPR/HIPAA/TSC compliance controls out of the box. But the alert I'm proudest of is one I wrote myself: **rule 100220**, a correlation rule that fires when multiple ransomware-precursor techniques (shadow copy deletion, scheduled task with encoded PowerShell, registry Run-key abuse, security tooling tampering) show up on the same host within a 5-minute window. That's not "one bad command" — that's a chain, and the rule treats it that way.
 
-- `screenshots/08_detection_rules/18_builtin_rule_sysmon_dllhost_detail.png`
-- `screenshots/08_detection_rules/19_custom_rule_ransomware_precursor_detail.png`
-- `screenshots/08_detection_rules/20_custom_rule_xml_deployment_terminal.png`
+![Built-in Sysmon dllhost rule detail](screenshots/08_detection_rules/18_builtin_rule_sysmon_dllhost_detail.png)
+*Out-of-the-box rule, already mapped to GDPR, HIPAA, and TSC controls.*
+
+![Custom ransomware precursor correlation rule](screenshots/08_detection_rules/19_custom_rule_ransomware_precursor_detail.png)
+*Rule `100220` — fires when multiple precursor techniques land on the same host within 5 minutes.*
+
+![Custom rule XML deployment via terminal](screenshots/08_detection_rules/20_custom_rule_xml_deployment_terminal.png)
+*Writing the rule and pushing it into the running Wazuh manager container.*
 
 ### 9. Vulnerability management, bonus round
 While I had the agent deployed, I let Wazuh's Vulnerability Detection module run against it too — 816 findings, mostly outdated Firefox packages, several rated Critical. Good reminder that unpatched browsers are still one of the easiest ways in. Also captured the Sysmon config driving all this telemetry, including the network-filter exclusion list.
 
-- `screenshots/09_vulnerability_management/21_vulnerability_inventory_firefox_cves.png`
-- `screenshots/09_vulnerability_management/22_sysmon_event_viewer_config.png`
+![Vulnerability inventory, Firefox CVEs](screenshots/09_vulnerability_management/21_vulnerability_inventory_firefox_cves.png)
+*816 findings on the agent, mostly an outdated Firefox build — several rated Critical.*
+
+![Sysmon event viewer config](screenshots/09_vulnerability_management/22_sysmon_event_viewer_config.png)
+*The Sysmon configuration driving telemetry for this whole investigation.*
 
 ---
 
