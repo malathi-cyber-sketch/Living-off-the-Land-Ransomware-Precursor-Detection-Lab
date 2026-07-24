@@ -1,4 +1,4 @@
-# 🎯 SOC Response Guide — Ransomware Precursor Intrusion
+# 🎯 SOC Response Guide - Ransomware Precursor Intrusion
 
 ![MITRE ATT&CK](https://img.shields.io/badge/Framework-MITRE%20ATT%26CK-D62B1F?style=for-the-badge)
 ![Detect](https://img.shields.io/badge/Phase-Detect-yellow?style=for-the-badge)
